@@ -1,9 +1,9 @@
 #!/bin/bash
 # IPO监控守护进程管理脚本
 
-DAEMON_SCRIPT="/workspace/ipo_daemon.py"
-DAEMON_LOG="/workspace/daemon.log"
-PID_FILE="/workspace/ipo_daemon.pid"
+DAEMON_SCRIPT="/workspace/ipo-monitor/ipo_daemon.py"
+DAEMON_LOG="/workspace/ipo-monitor/daemon.log"
+PID_FILE="/workspace/ipo-monitor/ipo_daemon.pid"
 
 case "$1" in
     start)
@@ -12,7 +12,7 @@ case "$1" in
             exit 1
         fi
         echo "🚀 启动IPO监控守护进程..."
-        nohup /root/.pyenv/shims/python3 "$DAEMON_SCRIPT" >> "$DAEMON_LOG" 2>&1 &
+        nohup python3 "$DAEMON_SCRIPT" >> "$DAEMON_LOG" 2>&1 &
         echo $! > "$PID_FILE"
         sleep 2
         if kill -0 $(cat "$PID_FILE") 2>/dev/null; then
@@ -55,7 +55,7 @@ case "$1" in
         ;;
     test)
         echo "🧪 执行一次测试任务..."
-        /root/.pyenv/shims/python3 /workspace/ipo_monitor.py
+        python3 /workspace/ipo-monitor/ipo_monitor.py
         ;;
     log)
         tail -f "$DAEMON_LOG"

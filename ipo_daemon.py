@@ -18,7 +18,7 @@ SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "09:00")  # 每天执行时间
 RUN_ON_START = os.getenv("RUN_ON_START", "true").lower() == "true"
 
 # 配置日志
-LOG_FILE = "/workspace/daemon.log"
+LOG_FILE = "/workspace/ipo-monitor/daemon.log"
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',

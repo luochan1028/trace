@@ -29,7 +29,7 @@ fi
 # 3. 安装依赖
 echo ""
 echo "[3/5] 安装Python依赖..."
-pip install requests beautifulsoup4 -q
+pip install requests beautifulsoup4 -q --break-system-packages
 
 # 4. 设置权限
 echo ""
