@@ -1,0 +1,19 @@
+[Unit]
+Description=IPO Monitor Daemon - Daily Push to WeChat
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/workspace
+Environment="WXPUSHER_APP_TOKEN=AT_QODOEG506OGc9zaKYdGj3g1CoQDx4buE"
+Environment="WXPUSHER_UIDS=UID_3BvOCpLVXk46SKf9iHLJ4nmRmh8g"
+Environment="SCHEDULE_TIME=09:00"
+ExecStart=/root/.pyenv/shims/python3 /workspace/ipo_daemon.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/workspace/daemon.log
+StandardError=append:/workspace/daemon.log
+
+[Install]
+WantedBy=multi-user.target
