@@ -12,7 +12,7 @@ case "$1" in
             exit 1
         fi
         echo "🚀 启动IPO监控守护进程..."
-        nohup python3 "$DAEMON_SCRIPT" >> "$DAEMON_LOG" 2>&1 &
+        nohup bash -c "export WXPUSHER_APP_TOKEN='$WXPUSHER_APP_TOKEN'; export WXPUSHER_UIDS='$WXPUSHER_UIDS'; python3 '$DAEMON_SCRIPT'" >> "$DAEMON_LOG" 2>&1 &
         echo $! > "$PID_FILE"
         sleep 2
         if kill -0 $(cat "$PID_FILE") 2>/dev/null; then
