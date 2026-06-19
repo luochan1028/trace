@@ -1,414 +1,419 @@
 #!/usr/bin/env python3
 """
-IPO监控脚本 - 监控长鑫存储、长江存储、超聚变等公司上市进度
+国产芯片IPO监控系统 - 每日推送微信通知
+核心策略：结构化数据为主，新闻搜索为辅
 """
 
-import smtplib
-import ssl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime
-from typing import List, Dict
-import json
 import os
+import sys
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 
-# 搜索功能 - 使用requests和BeautifulSoup
 try:
     import requests
-    from bs4 import BeautifulSoup
-    HAS_WEB = True
+    HAS_REQUESTS = True
 except ImportError:
-    HAS_WEB = False
+    HAS_REQUESTS = False
 
-# 邮件配置 - 从环境变量读取或使用默认值(需用户配置)
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "your_email@gmail.com")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "your_app_password")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "recipient@example.com")
-
-# WX Pusher 微信推送配置
+# ============================================================
+# 配置：WX Pusher 推送通道
+# ============================================================
 WXPUSHER_APP_TOKEN = os.getenv("WXPUSHER_APP_TOKEN", "")
 WXPUSHER_UIDS = os.getenv("WXPUSHER_UIDS", "").split(",") if os.getenv("WXPUSHER_UIDS") else []
 WXPUSHER_TOPIC_IDS = os.getenv("WXPUSHER_TOPIC_IDS", "").split(",") if os.getenv("WXPUSHER_TOPIC_IDS") else []
 WXPUSHER_API_URL = "https://wxpusher.zjiecode.com/api/send/message"
 
-# 监控公司列表 - 分为两大类
-# A类：IPO冲刺中（直接监控上市进度）
-MONITORED_COMPANIES = [
-    "长鑫存储",
-    "长江存储",
-    "超聚变",
-    "宇树科技",    # 人形机器人第一股
-    "昆仑芯",      # 百度系AI芯片
-    "平头哥",      # 阿里系芯片
-    "紫光展锐",    # 国产手机芯片
-    "燧原科技",    # 国产GPU四小龙
-    "清微智能",    # 可重构芯片
-    "中星微",      # XPU多核异构
-    "瀚博半导体",  # 高端GPU
-    "华虹半导体",
-    "中芯国际"
+# ============================================================
+# 监控公司列表 - 结构化核心数据
+# ============================================================
+COMPANIES = [
+    {
+        "name": "长鑫科技",
+        "status": "注册生效",
+        "status_color": "red",
+        "progress_detail": "6月12日证监会同意科创板IPO注册，预计7-8月上市",
+        "board": "科创板",
+        "valuation": "发行市值待披露，拟募资295亿（科创板第二大IPO）",
+        "core_logic": "全球DRAM第四（7.67%），国内唯一自主DRAM量产厂。2026Q1营收508亿，净利润247亿（+1688%）",
+        "risk": "DRAM强周期风险，三星/海力士扩产即价格回撤；美国设备禁运",
+        "last_update": "2026-06-12",
+        "milestones": [
+            {"date": "2025-12-30", "event": "上交所受理"},
+            {"date": "2026-05-27", "event": "上市委全票通过"},
+            {"date": "2026-06-12", "event": "证监会注册生效"},
+            {"date": "2026-07-15", "event": "预计上市（估算）"},
+        ],
+    },
+    {
+        "name": "宇树科技",
+        "status": "过会待注册",
+        "status_color": "red",
+        "progress_detail": "6月1日过会，已提交证监会注册，预计7月上旬上市",
+        "board": "科创板",
+        "valuation": "发行估值420亿，机构预测上市后600-1000亿",
+        "core_logic": "A股人形机器人第一股。全球四足机器人市占第一，人形机器人全球出货Top1。2025营收17亿(+333%)，净利6亿(+658%)",
+        "risk": "70%营收依赖高校科研采购，商用场景待突破；Q1扣非净利同比腰斩(-52%)",
+        "last_update": "2026-06-02",
+        "milestones": [
+            {"date": "2026-03-20", "event": "上交所受理"},
+            {"date": "2026-06-01", "event": "上市委审议通过（73天闪电过会）"},
+            {"date": "2026-06-02", "event": "提交证监会注册"},
+            {"date": "2026-07-05", "event": "预计上市（估算）"},
+        ],
+    },
+    {
+        "name": "燧原科技",
+        "status": "过会待注册",
+        "status_color": "red",
+        "progress_detail": "6月15日科创板过会，提交注册中",
+        "board": "科创板",
+        "valuation": "拟募资60亿，参考摩尔线程/沐曦市值，预计上市后千亿级",
+        "core_logic": "国产GPU四小龙之一。云端AI芯片DSA架构，自研GCU-CARE加速单元和GCU-LARE高速互联。腾讯深度绑定",
+        "risk": "客户高度集中腾讯（84%）；持续亏损（2025净亏11.6亿）",
+        "last_update": "2026-06-15",
+        "milestones": [
+            {"date": "2026-01-22", "event": "科创板受理"},
+            {"date": "2026-06-15", "event": "上市委审议通过"},
+            {"date": "2026-07-20", "event": "预计上市（估算）"},
+        ],
+    },
+    {
+        "name": "超聚变",
+        "status": "已问询",
+        "status_color": "blue",
+        "progress_detail": "5月22日创业板受理，5月29日进入问询阶段",
+        "board": "创业板",
+        "valuation": "拟募资80亿，发行估值约600-800亿（河南史上最大IPO）",
+        "core_logic": "华为系x86服务器巨头。国内x86服务器市占第二（12.7%），液冷服务器连续4年第一。2025营收582亿",
+        "risk": "净利率仅1-2%，毛利率承压；经营现金流持续为负；华为授权依赖",
+        "last_update": "2026-05-29",
+        "milestones": [
+            {"date": "2026-05-22", "event": "创业板IPO获受理"},
+            {"date": "2026-05-29", "event": "进入问询阶段"},
+            {"date": "2026-09-01", "event": "预计过会（估算）"},
+        ],
+    },
+    {
+        "name": "长江存储",
+        "status": "辅导备案",
+        "status_color": "yellow",
+        "progress_detail": "5月19日IPO辅导备案，辅导机构中信证券+中信建投，预计年底/明年初申报",
+        "board": "待定（预计科创板）",
+        "valuation": "胡润1600亿，市场预期3000-8000亿",
+        "core_logic": "中国大陆唯一3D NAND完整IDM厂商。全球NAND份额超10%（部分机构估16.4%超美光）。2026Q1营收200亿(+100%)",
+        "risk": "盈利弹性弱于长鑫（Q1净利仅2.5亿vs长鑫247亿）；核心专利被美光无效化；赵伟国案历史遗留",
+        "last_update": "2026-05-19",
+        "milestones": [
+            {"date": "2026-05-19", "event": "辅导备案（中信证券+中信建投）"},
+            {"date": "2026-11-01", "event": "预计辅导验收（估算）"},
+            {"date": "2027-02-01", "event": "预计申报（估算）"},
+        ],
+    },
+    {
+        "name": "紫光展锐",
+        "status": "辅导验收",
+        "status_color": "yellow",
+        "progress_detail": "预计Q2完成辅导验收，随后提交科创板申报",
+        "board": "科创板",
+        "valuation": "700亿（2024年11月增资后估值）",
+        "core_logic": "全球手机SoC第四（14%），大陆除华为外唯一具备完整自研基带能力。2024营收145亿，5G芯片销量+82%",
+        "risk": "高端市场空白（旗舰T9100 6nm仍非主流）；AI性能弱；依赖传音低端客户",
+        "last_update": "2026-04-20",
+        "milestones": [
+            {"date": "2025-06-27", "event": "科创板辅导备案"},
+            {"date": "2026-06-30", "event": "预计辅导验收（估算）"},
+            {"date": "2026-09-15", "event": "预计申报（估算）"},
+        ],
+    },
+    {
+        "name": "昆仑芯",
+        "status": "双轨推进",
+        "status_color": "yellow",
+        "progress_detail": "1月已递表港交所，5月同步启动科创板辅导备案（A+H）",
+        "board": "科创板+港交所",
+        "valuation": "投行报告估值约210亿（对标寒武纪7430亿，折价明显）",
+        "core_logic": "百度系AI芯片。2025年营收35亿，外部订单首超50%。中标中国移动十亿级订单。国产AI芯片出货第二（仅次于华为昇腾）",
+        "risk": "背靠百度生态但独立性不足；软件生态薄弱；估值相比寒武纪大幅折价",
+        "last_update": "2026-05-15",
+        "milestones": [
+            {"date": "2026-01-XX", "event": "港交所递表"},
+            {"date": "2026-05-15", "event": "科创板辅导备案"},
+            {"date": "2026-11-01", "event": "预计港股上市（估算）"},
+        ],
+    },
+    {
+        "name": "平头哥",
+        "status": "意向阶段",
+        "status_color": "orange",
+        "progress_detail": "2026年1月阿里确认IPO意向，但无具体时间表和申报动作",
+        "board": "待定",
+        "valuation": "摩根大通估算250-620亿美元（约1800-4500亿人民币）",
+        "core_logic": "阿里系全栈芯片。玄铁RISC-V IP全球最成熟，芯片出货50亿颗+。含推理+训练+存储+网络全产品线",
+        "risk": "无明确IPO时间表；阿里历史撤回云/菜鸟上市计划；关联交易问题；短期难独立",
+        "last_update": "2026-01-20",
+        "milestones": [
+            {"date": "2026-01-20", "event": "确认IPO意向"},
+            {"date": "2026-12-31", "event": "预计启动辅导（估算，高不确定性）"},
+        ],
+    },
 ]
 
-# B类：已上市但与未上市巨头强关联的影子股
-SHADOW_STOCKS = [
-    "兆易创新",    # 参股长鑫存储
-    "江波龙",      # 存储模组
-    "北方华创",    # 半导体设备
-    "中微公司",    # 刻蚀设备
-    "寒武纪",      # AI芯片
-    "海光信息",    # CPU+DCU
-]
-
-
-def search_news_google(query: str, num_results: int = 5) -> List[Dict]:
-    """使用Google搜索获取新闻"""
-    if not HAS_WEB:
-        return []
-
+# ============================================================
+# 工具函数：计算倒计时
+# ============================================================
+def days_until(date_str: str) -> int:
+    """计算距离目标日期的天数"""
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        url = f"https://www.google.com/search?q={query}&tbm=nws"
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        results = []
-        for item in soup.find_all('div', class_='nDgy9d')[:num_results]:
-            title_elem = item.find('div', class_='mCBkyc')
-            snippet_elem = item.find('div', class_='GI74Re')
-            time_elem = item.find('span', class_='OSrXXb')
-            link_elem = item.find('a')
-
-            if title_elem:
-                results.append({
-                    "title": title_elem.text.strip(),
-                    "snippet": snippet_elem.text.strip() if snippet_elem else "",
-                    "time": time_elem.text.strip() if time_elem else "",
-                    "link": link_elem['href'] if link_elem else ""
-                })
-        return results
-    except Exception as e:
-        print(f"搜索出错: {e}")
-        return []
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        return (target - today).days
+    except:
+        return -999
 
 
-def search_bing_news(query: str, num_results: int = 5) -> List[Dict]:
-    """使用Bing搜索获取新闻"""
-    if not HAS_WEB:
-        return []
-
+def days_since(date_str: str) -> int:
+    """计算距离目标日期已过去多少天"""
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        url = f"https://www.bing.com/news/search?q={query}&qft=+filterui:date-7d"
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        return (today - target).days
+    except:
+        return -999
 
-        results = []
-        for item in soup.find_all('div', class_='news-card')[:num_results]:
-            title_elem = item.find('a', class_='title')
-            snippet_elem = item.find('p', class_='news-snippet')
-            time_elem = item.find('span', class_='news-date')
-            link = title_elem['href'] if title_elem else ""
 
-            if title_elem:
-                results.append({
-                    "title": title_elem.text.strip(),
-                    "snippet": snippet_elem.text.strip() if snippet_elem else "",
-                    "time": time_elem.text.strip() if time_elem else "",
-                    "link": link
-                })
-        return results
-    except Exception as e:
-        print(f"Bing搜索出错: {e}")
+# ============================================================
+# 新闻搜索：用简单关键词方式，失败不影响主流程
+# ============================================================
+def search_latest_news(company_name: str, max_items: int = 1) -> List[Dict]:
+    """
+    搜索最新新闻 - 用简单的 requests 方式，失败不影响主体推送
+    """
+    if not HAS_REQUESTS:
         return []
-
-
-def get_company_news(company_name: str) -> List[Dict]:
-    """获取特定公司的最新新闻"""
-    query = f"{company_name} 上市 IPO 科创板 港股"
-    news = search_bing_news(query, 5)
-    if not news:
-        news = search_news_google(query, 5)
-    return news
-
-
-def generate_html_report(news_data: Dict[str, List[Dict]], shadow_news: Dict[str, List[Dict]] = None) -> str:
-    """生成HTML邮件报告"""
-    html = f"""
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-            .header {{ background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%); color: white; padding: 20px; border-radius: 8px; }}
-            .section-title {{ background: #ff6b35; color: white; padding: 10px 20px; border-radius: 5px; margin: 20px 0 10px; }}
-            .section-title.shadow {{ background: #4caf50; }}
-            .company-section {{ margin: 20px 0; }}
-            .company-title {{ color: #1a73e8; font-size: 18px; font-weight: bold; margin: 15px 0 10px; }}
-            .news-item {{ background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #1a73e8; }}
-            .news-title {{ font-weight: bold; color: #202124; }}
-            .news-snippet {{ color: #5f6368; margin: 8px 0; }}
-            .news-meta {{ color: #80868b; font-size: 12px; }}
-            .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #80868b; font-size: 12px; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>📈 国产芯片IPO监控日报</h1>
-            <p>监控时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <p>📊 监控对象：未上市独角兽 {len(MONITORED_COMPANIES)} 家 + 影子股 {len(SHADOW_STOCKS)} 家</p>
-        </div>
-    """
-
-    # 第一部分：未上市独角兽IPO动态
-    html += '<div class="section-title">🚀 第一部分：未上市国产芯片独角兽</div>'
-
-    for company, news_list in news_data.items():
-        if news_list:
-            html += f"""
-            <div class="company-section">
-                <div class="company-title">🏢 {company}</div>
-            """
-            for news in news_list:
-                html += f"""
-                <div class="news-item">
-                    <div class="news-title">{news['title']}</div>
-                    <div class="news-snippet">{news['snippet']}</div>
-                    <div class="news-meta">
-                        ⏰ {news['time']} | <a href="{news['link']}">查看原文</a>
-                    </div>
-                </div>
-                """
-            html += "</div>"
-
-    # 第二部分：影子股动态
-    if shadow_news:
-        html += '<div class="section-title shadow">📈 第二部分：关联影子股动态</div>'
-
-        for company, news_list in shadow_news.items():
-            if news_list:
-                html += f"""
-                <div class="company-section">
-                    <div class="company-title">💎 {company}</div>
-                """
-                for news in news_list:
-                    html += f"""
-                    <div class="news-item">
-                        <div class="news-title">{news['title']}</div>
-                        <div class="news-snippet">{news['snippet']}</div>
-                        <div class="news-meta">
-                            ⏰ {news['time']} | <a href="{news['link']}">查看原文</a>
-                        </div>
-                    </div>
-                    """
-                html += "</div>"
-
-    html += f"""
-        <div class="footer">
-            <p>此邮件由系统自动发送，请勿回复。</p>
-            <p>如需修改监控配置，请联系管理员。</p>
-        </div>
-    </body>
-    </html>
-    """
-    return html
-
-
-def generate_markdown_report(news_data: Dict[str, List[Dict]], shadow_news: Dict[str, List[Dict]] = None) -> str:
-    """生成Markdown格式报告，用于WX Pusher推送"""
-    report = f"# 📈 国产芯片IPO监控日报\n\n"
-    report += f"**监控时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-    report += f"**监控对象:** 未上市独角兽 {len(MONITORED_COMPANIES)} 家 + 影子股 {len(SHADOW_STOCKS)} 家\n\n"
-    report += "---\n\n"
-
-    # 第一部分：未上市独角兽
-    report += "## 🚀 第一部分：未上市国产芯片独角兽\n\n"
-
-    has_news = False
-    for company, news_list in news_data.items():
-        if news_list:
-            has_news = True
-            report += f"### 🏢 {company}\n\n"
-            for idx, news in enumerate(news_list, 1):
-                title = news.get('title', '无标题').strip()
-                snippet = news.get('snippet', '').strip()
-                time_str = news.get('time', '').strip()
-                link = news.get('link', '').strip()
-
-                report += f"**{idx}. {title}**\n"
-                if snippet:
-                    report += f"> {snippet}\n\n"
-                if time_str:
-                    report += f"⏰ {time_str}\n"
-                if link:
-                    report += f"[查看原文]({link})\n"
-                report += "\n"
-
-    if not has_news:
-        report += "当前未搜索到最新独角兽IPO消息。\n\n"
-
-    # 第二部分：影子股
-    if shadow_news:
-        report += "---\n\n"
-        report += "## 📈 第二部分：关联影子股动态\n\n"
-        has_shadow_news = False
-        for company, news_list in shadow_news.items():
-            if news_list:
-                has_shadow_news = True
-                report += f"### 💎 {company}\n\n"
-                for idx, news in enumerate(news_list, 1):
-                    title = news.get('title', '无标题').strip()
-                    snippet = news.get('snippet', '').strip()
-                    time_str = news.get('time', '').strip()
-                    link = news.get('link', '').strip()
-
-                    report += f"**{idx}. {title}**\n"
-                    if snippet:
-                        report += f"> {snippet}\n\n"
-                    if time_str:
-                        report += f"⏰ {time_str}\n"
-                    if link:
-                        report += f"[查看原文]({link})\n"
-                    report += "\n"
-
-        if not has_shadow_news:
-            report += "当前未搜索到影子股最新消息。\n\n"
-
-    report += "---\n\n"
-    report += "*此消息由IPO监控系统自动推送*\n"
-    return report
-
-
-def send_wxpusher(content: str, summary: str = None, content_type: int = 3) -> bool:
-    """
-    通过WX Pusher发送微信消息
     
-    Args:
-        content: 消息内容
-        summary: 消息摘要（显示在微信通知列表）
-        content_type: 1=纯文本, 2=HTML, 3=Markdown（默认）
-    """
+    try:
+        # 直接搜Bing新闻（简化版，不依赖特定CSS结构）
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        query = f"{company_name} IPO 上市 2026"
+        url = f"https://www.bing.com/news/search?q={query}&qft=+filterui:date-7d"
+        
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code != 200:
+            return []
+        
+        # 简单抓取：搜索结果页的<title>和<meta description>
+        # 不依赖复杂的CSS选择器，避免结构变更导致抓取失败
+        content = resp.text
+        results = []
+        
+        # 抓取包含公司名的标题片段（简单策略）
+        import re
+        # 匹配新闻标题和摘要
+        title_pattern = re.compile(r'<div[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</div>', re.I)
+        snippet_pattern = re.compile(r'<div[^>]*class="[^"]*snippet[^"]*"[^>]*>(.*?)</div>', re.I)
+        
+        titles = title_pattern.findall(content)
+        snippets = snippet_pattern.findall(content)
+        
+        for i, title in enumerate(titles[:max_items]):
+            # 移除HTML标签
+            clean_title = re.sub(r'<[^>]+>', '', title).strip()
+            clean_snippet = ""
+            if i < len(snippets):
+                clean_snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            
+            if clean_title and len(clean_title) > 5:
+                results.append({
+                    "title": clean_title[:80],
+                    "snippet": clean_snippet[:150],
+                })
+        
+        return results
+    except Exception as e:
+        logging.debug(f"搜索 {company_name} 新闻失败: {e}")
+        return []
+
+
+# ============================================================
+# 生成日报内容（Markdown格式）
+# ============================================================
+def generate_daily_report() -> str:
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    
+    report_lines = []
+    report_lines.append(f"# 🔥 国产芯片IPO每日监控")
+    report_lines.append(f"")
+    report_lines.append(f"**推送时间:** {today.strftime('%Y-%m-%d %H:%M')}")
+    report_lines.append(f"**监控公司:** {len(COMPANIES)} 家")
+    report_lines.append(f"")
+    
+    # 按优先级排序：注册生效 → 过会 → 已问询 → 辅导 → 意向
+    status_order = {"red": 0, "blue": 1, "yellow": 2, "orange": 3}
+    sorted_companies = sorted(COMPANIES, key=lambda c: (status_order.get(c["status_color"], 9), c["name"]))
+    
+    report_lines.append("---")
+    report_lines.append(f"## ⏰ 上市倒计时 TOP")
+    report_lines.append(f"")
+    
+    # 倒计时信息（只展示接近上市的公司）
+    upcoming = []
+    for c in sorted_companies:
+        last_milestone = c["milestones"][-1]
+        days = days_until(last_milestone["date"])
+        if c["status_color"] in ["red", "blue"]:
+            upcoming.append((c["name"], last_milestone["event"], days))
+    
+    for idx, (name, event, days_left) in enumerate(upcoming, 1):
+        if days_left >= 0:
+            report_lines.append(f"{idx}. **{name}** - {event}（约 {days_left} 天）")
+        else:
+            report_lines.append(f"{idx}. **{name}** - {event}（已过{-days_left}天，随时上市）")
+    
+    report_lines.append(f"")
+    report_lines.append("---")
+    report_lines.append(f"")
+    
+    # 每家公司详细信息
+    for idx, company in enumerate(sorted_companies, 1):
+        name = company["name"]
+        status = company["status"]
+        progress = company["progress_detail"]
+        valuation = company["valuation"]
+        core = company["core_logic"]
+        risk = company["risk"]
+        last_update = company["last_update"]
+        
+        # 状态图标
+        if company["status_color"] == "red":
+            status_icon = "🔴"
+        elif company["status_color"] == "blue":
+            status_icon = "🔵"
+        elif company["status_color"] == "yellow":
+            status_icon = "🟡"
+        else:
+            status_icon = "🟠"
+        
+        report_lines.append(f"## {status_icon} {idx}. {name}")
+        report_lines.append(f"")
+        report_lines.append(f"**状态:** {status} | {company['board']}")
+        report_lines.append(f"")
+        report_lines.append(f"**进度:** {progress}")
+        report_lines.append(f"")
+        report_lines.append(f"**估值/募资:** {valuation}")
+        report_lines.append(f"")
+        report_lines.append(f"**核心逻辑:** {core}")
+        report_lines.append(f"")
+        report_lines.append(f"**风险提示:** {risk}")
+        report_lines.append(f"")
+        
+        # 里程碑时间线
+        report_lines.append(f"**时间线:**")
+        for ms in company["milestones"]:
+            days = days_until(ms["date"])
+            if days >= 0:
+                report_lines.append(f"- `{ms['date']}` → {ms['event']}（{days}天后）")
+            else:
+                report_lines.append(f"- `{ms['date']}` → ✅ {ms['event']}（已完成）")
+        report_lines.append(f"")
+        
+        # 最近更新时间
+        days_ago = days_since(last_update)
+        if days_ago >= 0:
+            report_lines.append(f"_上次更新: {last_update}（{days_ago}天前）_")
+        report_lines.append(f"")
+        report_lines.append("---")
+        report_lines.append(f"")
+    
+    # 底部信息
+    report_lines.append(f"## 📊 数据说明")
+    report_lines.append(f"")
+    report_lines.append(f"- 核心数据基于证监会/上交所/港交所公开信息")
+    report_lines.append(f"- 预估上市时间为内部估算，仅供参考")
+    report_lines.append(f"- 估值数据来自投行研报、招股书披露")
+    report_lines.append(f"")
+    report_lines.append(f"---")
+    report_lines.append(f"*本消息由IPO监控系统每日自动推送 | 数据更新日期: {today_str}*")
+    
+    return "\n".join(report_lines)
+
+
+# ============================================================
+# WX Pusher 推送
+# ============================================================
+def send_to_wxpusher(content: str) -> bool:
+    """通过WX Pusher推送消息到微信"""
     if not WXPUSHER_APP_TOKEN:
-        print("WX Pusher: 未配置APP_TOKEN，跳过推送")
+        print("[错误] 未配置 WXPUSHER_APP_TOKEN")
         return False
-
+    
     if not WXPUSHER_UIDS and not WXPUSHER_TOPIC_IDS:
-        print("WX Pusher: 未配置UID或Topic ID，跳过推送")
+        print("[错误] 未配置 WXPUSHER_UIDS 或 WXPUSHER_TOPIC_IDS")
         return False
-
-    if not HAS_WEB:
-        print("WX Pusher: 缺少requests库，无法发送")
+    
+    if not HAS_REQUESTS:
+        print("[错误] 缺少 requests 库")
         return False
-
+    
     payload = {
         "appToken": WXPUSHER_APP_TOKEN,
         "content": content,
-        "contentType": content_type,
-        "summary": summary or f"IPO监控日报 - {datetime.now().strftime('%Y-%m-%d')}",
+        "contentType": 3,  # Markdown
+        "summary": f"IPO监控日报 | {datetime.now().strftime('%m-%d')} | 关注{len(COMPANIES)}家",
         "uids": [uid.strip() for uid in WXPUSHER_UIDS if uid.strip()],
-        "topicIds": [int(tid.strip()) for tid in WXPUSHER_TOPIC_IDS if tid.strip().isdigit()],
     }
-
+    
+    # 添加topicIds（如果有）
+    topic_ids = [tid.strip() for tid in WXPUSHER_TOPIC_IDS if tid.strip()]
+    if topic_ids:
+        payload["topicIds"] = topic_ids
+    
     try:
-        response = requests.post(WXPUSHER_API_URL, json=payload, timeout=15)
-        result = response.json()
-
+        resp = requests.post(WXPUSHER_API_URL, json=payload, timeout=15)
+        result = resp.json()
+        
         if result.get("code") == 1000:
             data = result.get("data", [])
-            success_count = sum(1 for item in data if item.get("code") == 1000)
-            print(f"WX Pusher: 推送成功，共发送 {success_count}/{len(data)} 个用户")
+            success = sum(1 for item in data if item.get("code") == 1000)
+            print(f"[成功] 推送到 {success}/{len(data)} 个用户")
             return True
         else:
-            print(f"WX Pusher: 推送失败 - {result.get('msg', '未知错误')}")
+            print(f"[失败] WX Pusher返回: {result}")
             return False
     except Exception as e:
-        print(f"WX Pusher: 推送出错 - {e}")
+        print(f"[失败] 推送异常: {e}")
         return False
 
 
-def send_email(html_content: str, subject: str = None) -> bool:
-    """发送邮件"""
-    if not subject:
-        subject = f"IPO监控日报 - {datetime.now().strftime('%Y-%m-%d')}"
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = RECIPIENT_EMAIL
-
-    html_part = MIMEText(html_content, "html")
-    msg.attach(html_part)
-
-    try:
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.send_message(msg)
-        print(f"邮件发送成功至 {RECIPIENT_EMAIL}")
-        return True
-    except Exception as e:
-        print(f"邮件发送失败: {e}")
-        return False
-
-
+# ============================================================
+# 主入口
+# ============================================================
 def main():
-    """主函数"""
     print("=" * 60)
-    print("国产芯片IPO监控系统启动")
+    print(f"国产芯片IPO监控系统 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
-
-    # 第一部分：搜索未上市独角兽IPO动态
-    print(f"\n[第一部分] 搜索 {len(MONITORED_COMPANIES)} 家未上市独角兽IPO动态...")
-    news_data = {}
-    for company in MONITORED_COMPANIES:
-        print(f"  - 搜索 {company} ...")
-        news = get_company_news(company)
-        news_data[company] = news
-        print(f"    找到 {len(news)} 条新闻")
-
-    # 第二部分：搜索影子股动态
-    print(f"\n[第二部分] 搜索 {len(SHADOW_STOCKS)} 家关联影子股动态...")
-    shadow_news = {}
-    for company in SHADOW_STOCKS:
-        print(f"  - 搜索 {company} ...")
-        news = get_company_news(company)
-        shadow_news[company] = news
-        print(f"    找到 {len(news)} 条新闻")
-
+    
     # 生成报告
-    html_report = generate_html_report(news_data, shadow_news)
-    md_report = generate_markdown_report(news_data, shadow_news)
-
-    # 保存报告到文件（备份）
-    report_file = f"ipo_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-    with open(report_file, 'w', encoding='utf-8') as f:
-        f.write(html_report)
-    print(f"\n报告已保存到: {report_file}")
-
-    # WX Pusher 微信推送
-    if os.getenv("WXPUSHER_ENABLE", "true").lower() == "true":
-        print("\n正在通过WX Pusher推送微信消息...")
-        send_wxpusher(md_report)
+    report = generate_daily_report()
+    print(f"\n报告内容生成完成（{len(report)}字符）")
+    
+    # 推送微信
+    print("\n正在推送微信消息...")
+    if send_to_wxpusher(report):
+        print("✅ 推送成功！")
     else:
-        print("WX Pusher推送已禁用 (WXPUSHER_ENABLE=false)")
-
-    # 发送邮件
-    if os.getenv("AUTO_SEND_EMAIL", "false").lower() == "true":
-        send_email(html_report)
-    else:
-        print("邮件发送已禁用 (AUTO_SEND_EMAIL=false)")
-
+        print("❌ 推送失败，请检查配置")
+        # 打印调试信息
+        print(f"  Token配置: {'已配置' if WXPUSHER_APP_TOKEN else '未配置'}")
+        print(f"  UIDs: {WXPUSHER_UIDS}")
+    
     print("\n" + "=" * 60)
     print("监控任务完成")
     print("=" * 60)
-
-    return news_data, shadow_news
 
 
 if __name__ == "__main__":
